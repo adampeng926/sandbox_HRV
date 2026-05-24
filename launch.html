@@ -3,8 +3,6 @@
 <head>
   <meta charset="UTF-8" />
   <title>SMART EHR Launch</title>
-
-  <!-- SMART JS -->
   <script src="https://cdn.jsdelivr.net/npm/fhirclient/build/fhir-client.min.js"></script>
 </head>
 
@@ -21,17 +19,29 @@
       document.body.innerHTML =
         "<h2 style='color:red'>Error: Not launched from EHR (missing launch)</h2>";
     } else {
+      
+      // 🌟 優化核心：動態產生 Redirect URI，不再寫死！
+      // 取得當前的網域 (origin) 與路徑 (pathname)，並把 launch.html 換成 index.html
+      // 本地端會變成：http://127.0.0.1:5500/index.html
+      // 雲端會變成：https://adampeng926.github.io/sandbox_HRV/index.html
+      const currentPath = window.location.pathname.replace("launch.html", "index.html");
+      const dynamicRedirectUri = window.location.origin + currentPath;
+      
+      console.log("目前動態產生的 Redirect URI 為: ", dynamicRedirectUri); // 留在這方便你們 F12 除錯
+
       FHIR.oauth2.authorize({
-        //clientId: "mohw-smart-dashboard",
         clientId: "cc344727-6f90-496c-94fd-c7829aa9a51d",
+        
+        // 💡 小提醒：在純前端 HTML 暴露 clientSecret 其實有資安風險。
+        // 但因為你們目前是連接 THAS Sandbox 測試環境，為了方便測試可以先保留。
+        // 未來如果是真正的正式醫療環境，這段授權必須移到後端 (Python) 處理。
         clientSecret: "79f04b56b33491716c0880af72cdef7d3f0629111421cedd18353651cd313d9e",
 
         // ✅ EHR launch 必要 scope
         scope: "launch launch/patient openid fhirUser patient/*.read",
 
-        // ✅ 必須與 sandbox 註冊完全一致
-        redirectUri: " https://adampeng926.github.io/sandbox_HRV/index.html",
-
+        // ✅ 帶入動態網址 (已解決空白 Bug 與團隊覆蓋問題)
+        redirectUri: dynamicRedirectUri,
 
         // ✅ 明確帶入，避免 sandbox 判斷錯誤
         iss: iss,
