@@ -4,51 +4,104 @@
   <meta charset="UTF-8" />
   <title>SMART Observation Viewer</title>
 
-  <!-- SMART JS -->
   <script src="https://cdn.jsdelivr.net/npm/fhirclient/build/fhir-client.min.js"></script>
 
   <style>
+    /* 優化排版與視覺回饋 */
     body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      padding: 2rem;
+      background-color: #f8f9fa;
+      color: #333;
+    }
+    
+    .container {
+      max-width: 800px;
+      margin: 0 auto;
+      background: white;
+      padding: 2rem;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+
+    #info {
       font-family: monospace;
       white-space: pre-wrap;
+      background: #2d2d2d;
+      color: #a9b7c6;
       padding: 1rem;
+      border-radius: 4px;
+      max-height: 400px;
+      overflow-y: auto;
+      margin-bottom: 1.5rem;
     }
+
+    /* 增強按鈕樣式與狀態提示 */
     button {
-      margin-top: 1rem;
-      padding: 0.6rem 1.2rem;
+      padding: 0.8rem 1.5rem;
       font-size: 1rem;
+      font-weight: bold;
+      color: white;
+      background-color: #007bff;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: background-color 0.2s;
+    }
+    
+    button:hover:not(:disabled) {
+      background-color: #0056b3;
+    }
+
+    button:disabled {
+      background-color: #6c757d;
+      cursor: not-allowed;
+      opacity: 0.7;
+    }
+
+    .loading::after {
+      content: " ⏳";
     }
   </style>
 </head>
 
 <body>
-  <h2>SMART on FHIR – SHIELD</h2>
+  <div class="container">
+    <h2>SMART on FHIR – SHIELD Dashboard</h2>
 
-  <div id="info">Initializing...</div>
+    <div id="info">🔄 Initializing connection to EHR...</div>
 
-  <button id="go">Send to SHIELD APP</button>
+    <button id="go" disabled class="loading">Preparing Data...</button>
+  </div>
 
   <script>
     /**********************************************************
-     * 下游 SHIELD App
+     * 1. 動態決定下游 SHIELD App 的網址
      **********************************************************/
-    const SHINY_URL = "https://project1-1-jv6d.onrender.com";
-
-    // ⭐ 指定的 Observation ID*686714
-    const OBS_ID = "obs-HRV-003";
+    let SHINY_URL = "https://project1-1-jv6d.onrender.com";
     
+    // 如果網頁跑在本地端 (localhost 或 127.0.0.1)，就將目標轉向本地的後端測試伺服器
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      // 請根據你本地 Python 伺服器實際跑的 Port 修改（例如 Flask 預設是 5000，FastAPI 預設是 8000）
+      SHINY_URL = "http://127.0.0.1:8000"; 
+      console.log("Local development mode detected. Target URL set to:", SHINY_URL);
+    }
+
+    // ⭐ 指定的 Observation ID
+    const OBS_ID = "obs-HRV-003";
 
     let accessToken = null;
     let fhirBase = null;
     let pid = null;
     let OBS_URL = null;
+    const btnGo = document.getElementById("go");
+    const infoBox = document.getElementById("info");
 
     /**********************************************************
-     * SMART OAuth Ready
+     * 2. SMART OAuth Ready & Fetch Data
      **********************************************************/
     FHIR.oauth2.ready()
       .then(client => {
-        // ✅ 讀 patient id
         accessToken = client.state.tokenResponse.access_token;
         fhirBase = client.state.serverUrl;
         pid = client.patient.id;
@@ -57,64 +110,50 @@
           throw new Error("No patient context (launch/patient missing)");
         }
 
-        document.getElementById("info").textContent =
-          "✅ SMART OAuth Ready\n\n" +
-          "FHIR Server:\n" + fhirBase + "\n\n" +
-          "Selected Patient:\nPatient/" + pid + "\n\n" +
-          "Request:\n" +
-          `GET Observation?subject=Patient/${pid}&_id=${OBS_ID}\n\n` +
-          "Response:\n";
+        infoBox.textContent = "✅ Connected to FHIR Server.\nFetching Observation data for patient: " + pid + "...\n";
 
-        // ⭐ 精確搜尋
-        return client.request(
-          `Observation?subject=Patient/${pid}&_id=${OBS_ID}`
-        );
+        // 向伺服器請求資料
+        return client.request(`Observation?subject=Patient/${pid}&_id=${OBS_ID}`);
       })
       .then(bundle => {
-        // ❌ 沒找到
         if (!bundle.entry || bundle.entry.length === 0) {
-          throw new Error(
-            `Observation _id=${OBS_ID} not found under Patient/${pid}`
-          );
+          throw new Error(`Observation _id=${OBS_ID} not found under Patient/${pid}`);
         }
-
-        // ❌ 理論上不該發生，但明確防呆
         if (bundle.entry.length !== 1) {
-          throw new Error(
-            `Unexpected result: ${bundle.entry.length} Observations returned`
-          );
+          throw new Error(`Unexpected result: ${bundle.entry.length} Observations returned`);
         }
 
-        // ✅ 唯一合法情況：剛好 1 筆
         const obs = bundle.entry[0].resource;
 
-        // 再次嚴格確認（語意安全）
-        if (obs.id !== OBS_ID) {
-          throw new Error("Returned Observation ID does not match requested _id");
-        }
-        if (obs.subject?.reference !== `Patient/${pid}`) {
-          throw new Error("Observation subject does not match selected patient");
+        if (obs.id !== OBS_ID || obs.subject?.reference !== `Patient/${pid}`) {
+          throw new Error("Returned data does not match requested patient or observation ID.");
         }
 
         OBS_URL = `${fhirBase}/Observation/${OBS_ID}`;
 
-        document.getElementById("info").textContent +=
-          JSON.stringify(obs, null, 2) +
-          "\n\n✅ Confirmed Observation:\n" +
-          OBS_URL;
+        // 資料抓取成功，顯示 JSON 並解鎖按鈕
+        infoBox.textContent = 
+          "✅ Data Retrieval Successful!\n\n" +
+          JSON.stringify(obs, null, 2);
+        
+        btnGo.disabled = false;
+        btnGo.classList.remove("loading");
+        btnGo.textContent = "Send to SHIELD APP";
       })
       .catch(err => {
-        document.getElementById("info").textContent =
-          "❌ Error:\n" + err.message;
+        infoBox.textContent = "❌ Error:\n" + err.message;
         console.error("SMART Error:", err);
+        
+        btnGo.textContent = "Data Load Failed";
+        btnGo.classList.remove("loading");
       });
 
     /**********************************************************
-     * 傳遞給 SHIELD（token + pid + obs + fhir）
+     * 3. 傳遞給 SHIELD（token + pid + obs + fhir）
      **********************************************************/
-    document.getElementById("go").onclick = () => {
+    btnGo.onclick = () => {
       if (!OBS_URL || !pid) {
-        alert("Observation not ready");
+        alert("Observation data is not ready yet.");
         return;
       }
 
